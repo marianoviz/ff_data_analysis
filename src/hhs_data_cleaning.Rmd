@@ -1,0 +1,237 @@
+---
+title: "hhs_data_cleaning"
+author: "Mariano Viz"
+date: "2024-10-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(writexl)
+library(readxl)
+library(janitor)
+library(jsonlite)
+library(data.world)
+
+```
+
+
+
+
+```{r}
+## Read in data
+
+# Sites
+biomass_sites <- read_excel(here("data", "raw","Aggregated Data - For baseline biomass change.xlsx"), sheet = "MA - Biomass by year")
+
+# HHS
+fastfield <- read_csv(here("data", "raw", "hhs_fastfield.csv"))
+
+kobo_1 <- read_excel(here("data", "raw", "hhs_kobo_mod_1.xlsx"))
+kobo_1_fp <- read_csv(here("data", "raw", "hhs_fp.csv"))
+
+kobo_2 <- read_excel(here("data", "raw", "hhs_kobo_mod_2.xlsx"))
+
+dwapi::configure(auth_token = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJyLWFuZC1yLXN0dWRpbzptYXJpYW5vdml6IiwiaXNzIjoiY2xpZW50OnItYW5kLXItc3R1ZGlvOmFnZW50Om1hcmlhbm92aXo6OjEyYzRkOTYzLTk0NDctNDg5Ni04ZmM0LTQ5YTM1ZWQ2MWQ0NSIsImlhdCI6MTcyODUwNTU0MCwicm9sZSI6WyJ1c2VyX2FwaV9hZG1pbiIsInVzZXJfYXBpX3JlYWQiLCJ1c2VyX2FwaV93cml0ZSJdLCJnZW5lcmFsLXB1cnBvc2UiOnRydWUsInNhbWwiOnt9fQ.MSVsDGnQK4y3WWiWYrDluIYsojOmmbrJC-PeFSgZY7qDq63pIobopiDTHcaCX8LG7pwuBC5HBQrO8Kk8ifahpQ")
+sql_stmt <- qry_sql("SELECT * FROM hhs_fp_hnd")  
+kobo_2_fp_hon <- data.world::query(
+  sql_stmt, "rare/household-surveys"
+)
+kobo_2_fp_phi <- read_csv(here("data", "raw", "hhs_fp_phl.csv"))
+
+#kobo_3 <- read_excel(here("data", "raw", "hhs_kobo_mod_3.xlsx")) #Check which sheets are relevant!
+kobo_3_fp_ind <- read_csv(here("data", "raw", "hhs_fp_idn.csv"))
+
+```
+
+
+
+
+
+```{r}
+# Get sites
+sites <- biomass_sites %>%
+  select(ma_name, country) %>%
+  distinct()
+
+```
+
+
+
+
+
+```{r}
+# Initial explorations of fastfield/kobo dfs
+
+# Check structure
+str(fastfield)
+str(kobo_1_fp)
+str(kobo_2_fp_hon)
+str(kobo_2_fp_phi)
+str(kobo_3_fp_ind)
+
+# View first few rows 
+head(fastfield)
+head(kobo_1_fp)
+head(kobo_2_fp_hon)
+head(kobo_2_fp_phi)
+head(kobo_3_fp_ind)
+
+# Get summary statistics
+summary(fastfield)
+summary(kobo_1_fp)
+summary(kobo_2_fp_hon)
+summary(kobo_2_fp_phi)
+summary(kobo_3_fp_ind)
+
+
+# Summary of the datasets that will be used
+fastfield_summary <- data.frame(
+  column_name = names(fastfield),
+  possible_values = sapply(fastfield, function(x) paste(unique(x), collapse = ", ")),
+  row.names = NULL
+) #Key grouping variables: maa and year
+
+kobo_1_fp_summary <- data.frame(
+  column_name = names(kobo_1_fp),
+  possible_values = sapply(kobo_1_fp, function(x) paste(unique(x), collapse = ", ")),
+  row.names = NULL
+) #Key grouping variables: ma_name and submission_time
+
+kobo_2_fp_hon_summary <- data.frame(
+  column_name = names(kobo_2_fp_hon),
+  possible_values = sapply(kobo_2_fp_hon, function(x) paste(unique(x), collapse = ", ")),
+  row.names = NULL
+) #Key grouping variables: ma_name and submission_time
+
+kobo_2_fp_phi_summary <- data.frame(
+  column_name = names(kobo_2_fp_phi),
+  possible_values = sapply(kobo_2_fp_phi, function(x) paste(unique(x), collapse = ", ")),
+  row.names = NULL
+) #Key grouping variables:level4_name -ONLY Palawan (Province)- and submission_time (2024)
+
+kobo_3_fp_ind_summary <- data.frame(
+  column_name = names(kobo_3_fp_ind),
+  possible_values = sapply(kobo_3_fp_ind, function(x) paste(unique(x), collapse = ", ")),
+  row.names = NULL
+) #Key grouping variables: ma_name (3 sites) and submission_time
+
+
+```
+
+
+
+
+```{r}
+# Check sites on fastfield df
+
+# Convert all sites to ma_name and to snake case lowercase
+sites$ma_name <- tolower(gsub(" ", "_", sites$ma_name))
+
+fastfield$ma_name <- tolower(gsub(" ", "_", fastfield$maa))
+kobo_1_fp$ma_name <- tolower(gsub(" ", "_", kobo_1_fp$ma_name))
+kobo_2_fp_hon$ma_name <- tolower(gsub(" ", "_", kobo_2_fp_hon$ma_name))
+kobo_2_fp_phi$level4_name <- tolower(gsub(" ", "_", kobo_2_fp_phi$level4_name))
+kobo_3_fp_ind$ma_name <- tolower(gsub(" ", "_", kobo_3_fp_ind$ma_name))
+
+
+# Filtered dfs
+fastfield_filtered <- fastfield %>%
+  select(ma_name, year) %>% 
+  filter(ma_name %in% sites$ma_name)
+
+kobo_1_fp$year <- year(ymd(kobo_1_fp$submission_time))  
+kobo_1_fp_filtered <- kobo_1_fp %>%
+  select(ma_name, submission_time, year) %>% 
+  filter(ma_name %in% sites$ma_name)
+
+kobo_2_fp_hon$year <- year(ymd(kobo_2_fp_hon$submission_time))
+kobo_2_fp_hon_filtered <- kobo_2_fp_hon  %>%
+  select(ma_name, submission_time, year) %>% 
+  filter(ma_name %in% sites$ma_name)
+
+kobo_2_fp_phi$year <- year(ymd(kobo_2_fp_phi$submission_time))
+kobo_2_fp_phi_filtered <- kobo_2_fp_phi %>%
+  select(ma_name, submission_time, year) %>% 
+  filter(ma_name %in% sites$ma_name)
+
+kobo_3_fp_ind$year <- year(ymd(kobo_3_fp_ind$submission_time))
+kobo_3_fp_ind_filtered <- kobo_3_fp_ind %>%
+  select(ma_name, submission_time, year) %>% 
+  filter(ma_name %in% sites$ma_name)
+
+
+```
+
+
+
+
+```{r}
+# Viz
+
+combined_data <- rbind(
+  fastfield_filtered %>% select(ma_name, year),
+  kobo_1_fp_filtered %>% select(ma_name, year),
+  kobo_2_fp_hon_filtered %>% select(ma_name, year),
+  kobo_2_fp_phi_filtered %>% select(ma_name, year),
+  kobo_3_fp_ind_filtered %>% select(ma_name, year)
+)
+
+survey_count <- combined_data %>%
+  group_by(ma_name, year) %>%
+  summarize(survey_count = n())
+
+
+ggplot(survey_count, aes(x = year, y = survey_count, group = ma_name, color = ma_name)) +
+  geom_line() +    # Plot lines for each reserve
+  geom_point() +   # Add points to show the exact count
+  labs(title = "Number of Surveys per Year for Each Marine Reserve",
+       x = "Year",
+       y = "Number of Surveys",
+       color = "Marine Reserve") +
+  theme_minimal()
+
+
+ggplot(survey_count, aes(x = year, y = survey_count)) +
+  geom_line() +    # Plot lines for each reserve
+  geom_point() +   # Add points to show the exact count
+  labs(title = "Number of Surveys per Year for Each Marine Reserve",
+       x = "Year",
+       y = "Number of Surveys") +
+  facet_wrap(~ ma_name) +
+  theme_minimal()
+
+ggplot(survey_count, aes(x = year, y = survey_count, color = ma_name)) +
+  geom_point(size = 3) +  # Add points, adjust size as needed
+  labs(title = "Number of Surveys per Year for Each Marine Reserve",
+       x = "Year",
+       y = "Number of Surveys",
+       color = "Marine Reserve") +
+  theme_minimal()
+
+
+
+survey_summary <- survey_count %>%
+  group_by(ma_name) %>%
+  summarize(
+    survey_periods = paste(unique(year), collapse = ", "),  # List the unique survey years
+    total_surveys = sum(survey_count)  # Sum the total number of surveys
+  )
+
+missing_ma_names <- sites$ma_name[!sites$ma_name %in% survey_summary$ma_name]
+
+missing_summary <- data.frame(
+  ma_name = missing_ma_names,
+  survey_periods = "0",  
+  total_surveys = 0     
+)
+
+full_survey_summary <- rbind(survey_summary, missing_summary) %>%
+  arrange(desc(total_surveys))
+
+```
+
+
