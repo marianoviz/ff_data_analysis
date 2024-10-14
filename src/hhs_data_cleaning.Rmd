@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
 
 library(tidyverse)
 library(here)
@@ -15,6 +16,8 @@ library(readxl)
 library(janitor)
 library(jsonlite)
 library(data.world)
+library(kableExtra)
+library(knitr)
 
 ```
 
@@ -57,6 +60,9 @@ sites <- biomass_sites %>%
   select(ma_name, country) %>%
   distinct()
 
+sites_year <- biomass_sites %>%
+  select(ma_name, country, year)
+sites_year$ma_name <- tolower(gsub(" ", "_", sites_year$ma_name))
 ```
 
 
@@ -214,6 +220,35 @@ ggplot(survey_count, aes(x = year, y = survey_count, color = ma_name)) +
 
 
 
+combined_data_fw <- rbind(
+  fastfield_filtered %>% select(ma_name, year) %>% mutate(dataset = "Fastfield"),
+  kobo_1_fp_filtered %>% select(ma_name, year) %>% mutate(dataset = "Kobo 1"),
+  kobo_2_fp_hon_filtered %>% select(ma_name, year) %>% mutate(dataset = "Kobo 2"),
+  kobo_2_fp_phi_filtered %>% select(ma_name, year) %>% mutate(dataset = "Kobo 2"),
+  kobo_3_fp_ind_filtered %>% select(ma_name, year) %>% mutate(dataset = "Kobo 3")
+)
+
+survey_count_fw <- combined_data_fw %>%
+  group_by(ma_name, year, dataset) %>%
+  summarize(survey_count = n())
+
+hhs_year_source <- ggplot(survey_count_fw, aes(x = year, y = survey_count, color = dataset)) +
+  geom_point(size = 3) +   # Add points for each survey count
+  labs(title = "HHS by Year for Each Marine Reserve",
+       x = "Year",
+       y = "Number of Surveys",
+       color = "HHS Source") +  # Color by dataset source
+  facet_wrap(~ ma_name) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+```{r}
+
+# Tables 
 survey_summary <- survey_count %>%
   group_by(ma_name) %>%
   summarize(
@@ -232,6 +267,77 @@ missing_summary <- data.frame(
 full_survey_summary <- rbind(survey_summary, missing_summary) %>%
   arrange(desc(total_surveys))
 
+# Group by ma_name and put years into a single string
+sites_year_biomass <- sites_year %>%
+  group_by(ma_name) %>%
+  summarize(biomass_survey = paste(unique(year), collapse = ", "),
+            country = first(country)) 
+
+# Merge the two datasets based on ma_name
+hhs_biomass_data <- full_survey_summary %>%
+  left_join(sites_year_biomass, by = "ma_name") %>%
+  rename(hh_survey = survey_periods,
+         total_hh_survey = total_surveys) %>%
+  select(ma_name, country, biomass_survey, hh_survey, total_hh_survey)
+
+
+hhs_biomass_long <- hhs_biomass_data %>%
+  filter(hh_survey != "0") %>%  # Remove rows where hh_survey is "0"
+  separate_rows(biomass_survey, sep = ", ") %>% 
+  mutate(biomass_survey = as.integer(biomass_survey)) %>%
+  separate_rows(hh_survey, sep = ", ") %>%
+  mutate(hh_survey = as.integer(hh_survey)) %>%
+  pivot_longer(cols = c(biomass_survey, hh_survey), 
+               names_to = "survey_type", 
+               values_to = "year") %>%
+  filter(!is.na(year))
+
+
+biomass_hhs_table <- hhs_biomass_data %>%
+  kbl(caption = "Biomass and Household Survey Data Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+
+ggplot(hhs_biomass_long, aes(x = year, y = ma_name, color = survey_type)) +
+  geom_point(size = 2, alpha = 0.5) +  # Add points to indicate the survey year
+  labs(title = "Biomass and Household Surveys per Marine Area",
+       x = "Year",
+       y = "Marine Reserve",
+       color = "Survey Type") +
+  scale_color_manual(values = c("biomass_survey" = "dodgerblue1", "hh_survey" = "orange1")) +
+  scale_x_continuous(breaks = seq(2010, 2023, by = 1), limits = c(2010, 2023)) +  # Set breaks and limits for x-axis
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+biomass_hhs_plot <- ggplot(hhs_biomass_long, aes(x = year, y = survey_type, group = survey_type, color = survey_type)) +
+  geom_line(size = 1, alpha = 0.5) +  # Add translucent lines connecting the points
+  geom_point(size = 1) +  # Smaller points
+  labs(title = "Biomass and Household Surveys per Marine Area",
+       x = "Year",
+       y = "Survey Type",
+       color = "Survey Type") +
+  scale_color_manual(values = c("biomass_survey" = "dodgerblue1", "hh_survey" = "orange1")) +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(2010, 2023, by = 3), limits = c(2010, 2023)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels
+        strip.text = element_text(size = 8)) +  # Adjust the size of facet labels
+  facet_wrap(~ ma_name, scales = "free_y")
+
 ```
 
+
+
+
+
+
+```{r}
+
+biomass_hhs_table
+
+hhs_year_source
+
+biomass_hhs_plot
+
+
+```
 
